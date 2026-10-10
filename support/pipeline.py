@@ -22,6 +22,7 @@ from google.genai import types
 from toolbox_core import ToolboxClient
 
 from support import config, tracing
+from support.guards import sanitizer
 from support.agent import APP_NAME, MODEL, TOOLBOX_URL, build_agent, check_login, load_agent_tools
 from support.runlog import write_run_log
 from support.toolinfo import tool_info
@@ -30,6 +31,9 @@ CAP_REPLY = (
     "I couldn't finish that within my limits for a single request ({why}). "
     "Please try a simpler question or break it into smaller steps."
 )
+
+
+BLOCK_REPLY = "Sorry, I can't help with that request. I can help with your orders, deliveries, returns and account."
 
 
 def new_turn_id() -> str:
@@ -162,6 +166,21 @@ class Pipeline:
         try:
             yield {"type": "trace", "turn_id": st.turn_id, "trace_id": st.trace_id, "url": tracing.trace_url(st.trace_id)}
 
+            # ---- sanitize (S-1/S-2): cheap, in-process, no model call
+            yield {"type": "stage", "key": "sanitize", "label": "Input Sanitizer"}
+            t_s = time.perf_counter()
+            with tracing.step_span(ctx, "security.sanitize", "GUARDRAIL") as sp:
+                verdict = sanitizer.check(message)
+                sp.set_attribute("guard.verdict", "allow" if verdict.allow else "block")
+                sp.set_attribute("guard.reason", verdict.reason)
+            ms = _ms(t_s)
+            st.steps.append({"key": "sanitize", "status": "passed" if verdict.allow else "blocked", "ms": ms})
+            yield {"type": "step", "key": "sanitize", "status": "passed" if verdict.allow else "blocked",
+                   "detail": verdict.reason, "ms": ms, "span": "security.sanitize", "kind": "Python fn"}
+            if not verdict.allow:
+                yield self._blocked_final(st, "sanitize", end_span)
+                return
+
             final_text, cap_reason, error = "", None, None
             async for ev in self._run_agent(us, st, ctx):
                 if ev["type"] == "_result":
@@ -190,6 +209,14 @@ class Pipeline:
             }
         finally:
             end_span("", "turn abandoned before a terminal event")  # no-op if already ended
+
+    def _blocked_final(self, st: TurnState, key: str, end_span) -> dict:
+        """P-3: a blocking guard ends the turn at once. No later step runs, including save. Run log first (P-5)."""
+        st.terminated, st.blocked_at = "blocked", key
+        write_run_log(st.log())
+        end_span(BLOCK_REPLY)
+        return {"type": "final", "blocked": True, "blocked_at": key, "response": BLOCK_REPLY,
+                "terminated": "blocked", "wall_clock_ms": _ms(st.t0), "tokens": {"in": st.tokens_in, "out": st.tokens_out}}
 
     async def _run_agent(self, us: UserSession, st: TurnState, ctx) -> AsyncIterator[dict]:
         """Run the ADK agent, translating its events into llm / tool_call / tool_result events, under the P-6 budgets."""
