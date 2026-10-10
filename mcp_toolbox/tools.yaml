@@ -82,6 +82,24 @@ tools:
             )
       RETURNING id, timestamp, action_type;
 
+  # Used by the application to log a customer in (no SQL in Python, M-2). It lives in its own toolset,
+  # `app_auth`, which the agent never loads: the model cannot call it.
+  check-login:
+    kind: postgres-sql
+    source: support-postgres
+    description: Check an email and password against the demo users table. Returns the user's name and premium flag.
+    parameters:
+      - name: email
+        type: string
+        description: The email the customer typed at login.
+      - name: password
+        type: string
+        description: The password the customer typed at login (demo seed, plain text; SPEC section 8).
+    statement: |
+      SELECT email, full_name, is_premium_customer
+      FROM users
+      WHERE email = $1 AND password = $2;
+
 # M-6: the agent's toolset names exactly these three. No tool in this file can modify customer_orders,
 # and the database role (db/db.sh) has no UPDATE or DELETE grant on it either.
 toolsets:
@@ -89,3 +107,5 @@ toolsets:
     - get-order-status
     - find-customer-orders
     - action-log
+  app_auth:
+    - check-login
