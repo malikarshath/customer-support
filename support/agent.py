@@ -17,6 +17,7 @@ load_dotenv()
 # SPEC names gemini-2.5-flash, but Google returns 404 for it on new API keys ("no longer available to
 # new users"). Default to the model Google recommends; override with SUPPORT_MODEL in .env.
 MODEL = os.getenv("SUPPORT_MODEL", "gemini-3.8-flash")
+APP_NAME = "support"
 TOOLBOX_URL = f"http://127.0.0.1:{os.getenv('TOOLBOX_PORT', '5001')}"
 
 INSTRUCTION = """You are the customer support agent for an online shop. You help one logged-in customer
