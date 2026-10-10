@@ -14,13 +14,13 @@ Alice never sees Bob's laptop.
 ---
 
 ## Stage 1: the database
-- **I decided:**
+- **I decided:** TRUNCATE TABLE
 - **I predicted:**
 - **What happened (paste output):**
 
 ## Stage 2: the tools, and where access control lives
 - **Before reading SPEC R-1, I thought ownership belonged in:**
-- **I decided:**
+- **I decided:** ownership must be enforced directly in the SQL statement using bound parameters injected by the host environment, completely out of the model's reach. The raw input query enters the system as an unowned, untrusted text block. The moment it passes R-1 (Input Sanitization), the application layer explicitly binds the authenticated session email to the execution context. The tool definitions handle the rest deterministically (e.g., WHERE customer_email = $1), making it cryptographically impossible for a prompt injection attack to leak another customer's order.
 - **What happened (order 5 as alice):**
 
 ## Stage 3: the agent, and a bare CLI
@@ -62,7 +62,7 @@ Alice never sees Bob's laptop.
 - **Something the UI shows that the CLI doesn't (feature or leak?):**
 
 ## Stage 10: the eval runner
-- **How I handled the memory waits:**
+- **How I handled the memory waits:** To keep the T-MEM-WAIT ≥ 120s requirement from stretching the evaluation run into hours, you must parallelize the test execution by overlapping the wait times rather than running the memory evaluation pairs sequentially.
 - **First run's failing rows, and what I changed:**
 - **Second run: see `reports/eval.json` (don't retype numbers here).**
 - **Successful turn I read end to end (trace id), and what it taught me:**
