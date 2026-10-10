@@ -21,8 +21,9 @@ class GuardError(Exception):
         self.message = message
 
 
-async def tasks_send(step: str, label: str, base_url: str, text: str, timeout: float = 20.0) -> dict:
-    """Send one text message with `tasks/send`; return the first `data` part of the completed task."""
+async def tasks_send(step: str, label: str, base_url: str, text: str, timeout: float = 20.0, data: dict | None = None) -> dict:
+    """Send one text message with `tasks/send` (plus an optional `data` part of context); return the first `data`
+    part of the completed task."""
     headers: dict[str, str] = {}
     propagate.inject(headers)  # W3C traceparent, so a traced service can join the turn's trace
     payload = {
@@ -31,6 +32,8 @@ async def tasks_send(step: str, label: str, base_url: str, text: str, timeout: f
         "method": "tasks/send",
         "params": {"id": str(uuid.uuid4()), "message": {"role": "user", "parts": [{"type": "text", "text": text}]}},
     }
+    if data is not None:
+        payload["params"]["message"]["parts"].append({"type": "data", "data": data})
     try:
         async with httpx.AsyncClient(timeout=timeout) as c:
             r = await c.post(base_url, json=payload, headers=headers)

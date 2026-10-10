@@ -240,6 +240,20 @@ class Pipeline:
                 final_text = CAP_REPLY.format(why=cap_reason)
             else:
                 st.terminated = "done"
+                # ---- mask (K-1..K-3): separate A2A process; only other people's PII is changed
+                yield {"type": "stage", "key": "mask", "label": "A2A Data Masker"}
+                t_m = time.perf_counter()
+                try:
+                    md = await self._a2a_guard(ctx, "security.a2a_mask", "mask", "Data Masker", config.MASKER_URL,
+                                               final_text, extra={"own_email": email})
+                except GuardError as ge:
+                    yield self._guard_error(st, ge, t_m, end_span, failing)
+                    return
+                ms = _ms(t_m)
+                final_text = md["masked_text"]
+                st.steps.append({"key": "mask", "status": "passed", "ms": ms, "masked": md["count"]})
+                yield {"type": "step", "key": "mask", "status": "passed", "detail": md.get("detail", ""),
+                       "ms": ms, "span": "security.a2a_mask", "kind": "A2A"}
             write_run_log(st.log())  # P-5: before the terminal event
             end_span(final_text)
             yield {
@@ -250,14 +264,17 @@ class Pipeline:
         finally:
             end_span("", "turn abandoned before a terminal event")  # no-op if already ended
 
-    async def _a2a_guard(self, ctx, span_name: str, key: str, label: str, url: str, text: str) -> dict:
-        """Call an A2A guard inside its named span. The span goes red on any failure. Verdict must be explicit (R-9)."""
+    async def _a2a_guard(self, ctx, span_name: str, key: str, label: str, url: str, text: str, extra: dict | None = None) -> dict:
+        """Call an A2A guard inside its named span. The span goes red on any failure. The reply must be explicit
+        and well-formed (R-9): a judge verdict, or a masker result with text and a count."""
         with tracing.step_span(ctx, span_name, "GUARDRAIL", **{"a2a.url": url, "a2a.method": "tasks/send"}) as sp:
-            data = await a2a_client.tasks_send(key, label, url, text)
+            data = await a2a_client.tasks_send(key, label, url, text, data=extra)
             if key == "judge" and data.get("verdict") not in ("allow", "block"):
                 raise GuardError(key, f"{label} returned no explicit verdict: {str(data)[:120]}")
-            sp.set_attribute("guard.verdict", str(data.get("verdict", "")))
-            sp.set_attribute("guard.reason", str(data.get("reason", "")))
+            if key == "mask" and not (isinstance(data.get("masked_text"), str) and isinstance(data.get("count"), int)):
+                raise GuardError(key, f"{label} returned a malformed result: {str(data)[:120]}")
+            sp.set_attribute("guard.verdict", str(data.get("verdict", data.get("detail", ""))))
+            sp.set_attribute("guard.reason", str(data.get("reason", data.get("detail", ""))))
         return data
 
     def _guard_error(self, st: TurnState, ge: GuardError, t_start: float, end_span, failing: bool) -> dict:
