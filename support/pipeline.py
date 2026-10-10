@@ -22,7 +22,7 @@ from google.genai import types
 from toolbox_core import ToolboxClient
 
 from support import config, tracing
-from support import a2a_client
+from support import a2a_client, memory
 from support.a2a_client import GuardError
 from support.guards import guardrail, sanitizer
 from support.agent import APP_NAME, MODEL, TOOLBOX_URL, build_agent, check_login, load_agent_tools
@@ -221,8 +221,28 @@ class Pipeline:
                 yield self._blocked_final(st, "guardrail", end_span)
                 return
 
+            # ---- recall (R-1..R-3, R-5): a pipeline step, not a tool. Mem0 failure = error turn.
+            yield {"type": "stage", "key": "recall", "label": "Memory recall (Mem0)"}
+            t_r = time.perf_counter()
+            try:
+                with tracing.step_span(ctx, "memory.recall", "RETRIEVER", **{"input.value": message}) as sp:
+                    cands = await memory.recall(email, message)
+                    for i, c in enumerate(cands):
+                        sp.set_attribute(f"retrieval.documents.{i}.document.content", c["_full"])
+                        sp.set_attribute(f"retrieval.documents.{i}.document.score", c["score"])
+            except GuardError as ge:
+                yield self._guard_error(st, ge, t_r, end_span, failing)
+                return
+            ms = _ms(t_r)
+            n_in = sum(1 for c in cands if c["inserted"])
+            st.steps.append({"key": "recall", "status": "passed", "ms": ms, "inserted": n_in, "skipped": len(cands) - n_in})
+            yield {"type": "step", "key": "recall", "status": "passed", "kind": "Python fn", "ms": ms, "span": "memory.recall",
+                   "detail": f"{len(cands)} candidate(s), {n_in} inserted",
+                   "memories": [{k: c[k] for k in ("memory", "score", "inserted", "reason")} for c in cands]}
+            agent_input = memory.render_input(message, cands)
+
             final_text, cap_reason, error = "", None, None
-            async for ev in self._run_agent(us, st, ctx):
+            async for ev in self._run_agent(us, st, ctx, agent_input):
                 if ev["type"] == "_result":
                     final_text, cap_reason, error = ev["text"], ev["cap"], ev["error"]
                 else:
@@ -254,6 +274,22 @@ class Pipeline:
                 st.steps.append({"key": "mask", "status": "passed", "ms": ms, "masked": md["count"]})
                 yield {"type": "step", "key": "mask", "status": "passed", "detail": md.get("detail", ""),
                        "ms": ms, "span": "security.a2a_mask", "kind": "A2A"}
+            if st.terminated == "done":
+                # ---- save (R-4): only the USER's message, only on a turn that was neither blocked nor errored.
+                yield {"type": "stage", "key": "save", "label": "Memory save (Mem0)"}
+                t_v = time.perf_counter()
+                try:
+                    with tracing.step_span(ctx, "memory.save", "TOOL", **{"input.value": message}) as sp:
+                        sres = await memory.save(email, message)
+                        sp.set_attribute("output.value", str(sres.get("status", sres)))
+                except GuardError as ge:
+                    yield self._guard_error(st, ge, t_v, end_span, failing)
+                    return
+                ms = _ms(t_v)
+                st.steps.append({"key": "save", "status": "passed", "ms": ms})
+                yield {"type": "step", "key": "save", "status": "passed", "kind": "Python fn", "ms": ms,
+                       "span": "memory.save", "detail": f"saved the user's message (mem0 {sres.get('status', 'ok')})"}
+
             write_run_log(st.log())  # P-5: before the terminal event
             end_span(final_text)
             yield {
@@ -293,11 +329,11 @@ class Pipeline:
         return {"type": "final", "blocked": True, "blocked_at": key, "response": BLOCK_REPLY,
                 "terminated": "blocked", "wall_clock_ms": _ms(st.t0), "tokens": {"in": st.tokens_in, "out": st.tokens_out}}
 
-    async def _run_agent(self, us: UserSession, st: TurnState, ctx) -> AsyncIterator[dict]:
+    async def _run_agent(self, us: UserSession, st: TurnState, ctx, agent_input: str) -> AsyncIterator[dict]:
         """Run the ADK agent, translating its events into llm / tool_call / tool_result events, under the P-6 budgets."""
         yield {"type": "stage", "key": "agent", "label": "Support agent"}
         t_agent = time.perf_counter()
-        msg = types.Content(role="user", parts=[types.Part(text=st.message)])
+        msg = types.Content(role="user", parts=[types.Part(text=agent_input)])
         gen = us.runner.run_async(user_id=us.email, session_id=us.session_id, new_message=msg)
 
         text, cap, error = "", None, None
