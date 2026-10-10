@@ -24,7 +24,7 @@ from toolbox_core import ToolboxClient
 from support import config, tracing
 from support import a2a_client
 from support.a2a_client import GuardError
-from support.guards import sanitizer
+from support.guards import guardrail, sanitizer
 from support.agent import APP_NAME, MODEL, TOOLBOX_URL, build_agent, check_login, load_agent_tools
 from support.runlog import write_run_log
 from support.toolinfo import tool_info
@@ -199,6 +199,26 @@ class Pipeline:
                    "detail": f"{data['verdict']}: {data['reason']}", "ms": ms, "span": "security.a2a_judge", "kind": "A2A"}
             if not allowed:
                 yield self._blocked_final(st, "judge", end_span)
+                return
+
+            # ---- guardrail (GR-1..GR-4): in-process ADK agent; its invoke_agent span nests under guardrail.check
+            yield {"type": "stage", "key": "guardrail", "label": "Scope Guardrail"}
+            t_g = time.perf_counter()
+            try:
+                with tracing.step_span(ctx, "guardrail.check", "GUARDRAIL") as sp:
+                    gd = await guardrail.check(message)
+                    sp.set_attribute("guard.verdict", gd["decision"])
+                    sp.set_attribute("guard.reason", gd["reasoning"])
+            except GuardError as ge:
+                yield self._guard_error(st, ge, t_g, end_span, failing)
+                return
+            ms = _ms(t_g)
+            safe = gd["decision"] == "safe"
+            st.steps.append({"key": "guardrail", "status": "passed" if safe else "blocked", "ms": ms})
+            yield {"type": "step", "key": "guardrail", "status": "passed" if safe else "blocked",
+                   "detail": f"{gd['decision']}: {gd['reasoning']}", "ms": ms, "span": "guardrail.check", "kind": "in-process"}
+            if not safe:
+                yield self._blocked_final(st, "guardrail", end_span)
                 return
 
             final_text, cap_reason, error = "", None, None
