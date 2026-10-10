@@ -50,6 +50,8 @@ def render(ev: dict) -> str | None:
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--events", action="store_true", help="print the raw event stream as NDJSON on stdout")
+    ap.add_argument("--failing-demo", action="store_true",
+                    help="mark this session's turns as the deliberate failing trajectory (logs go to runs/failing/)")
     args = ap.parse_args()
 
     pipe = await Pipeline().start()
@@ -70,7 +72,7 @@ async def main() -> int:
                 break
             if not text.strip():
                 continue
-            async for ev in pipe.run_turn(user["user_id"], text):
+            async for ev in pipe.run_turn(user["user_id"], text, failing=args.failing_demo):
                 if args.events:
                     print(json.dumps(ev), flush=True)
                 else:

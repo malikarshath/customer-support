@@ -15,3 +15,6 @@ T_MEM_MINSCORE = float(os.getenv("T_MEM_MINSCORE", "0.25"))
 T_MEM_MAXCHARS = 500
 
 RUNS_DIR = ROOT / "runs"
+
+JUDGE_URL = f"http://127.0.0.1:{os.getenv('JUDGE_PORT', '10002')}/"
+MASKER_URL = f"http://127.0.0.1:{os.getenv('MASKER_PORT', '10003')}/"

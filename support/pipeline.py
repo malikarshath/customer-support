@@ -22,6 +22,8 @@ from google.genai import types
 from toolbox_core import ToolboxClient
 
 from support import config, tracing
+from support import a2a_client
+from support.a2a_client import GuardError
 from support.guards import sanitizer
 from support.agent import APP_NAME, MODEL, TOOLBOX_URL, build_agent, check_login, load_agent_tools
 from support.runlog import write_run_log
@@ -144,7 +146,8 @@ class Pipeline:
 
     # ------------------------------------------------------------------ the turn
 
-    async def run_turn(self, email: str, message: str) -> AsyncIterator[dict]:
+    async def run_turn(self, email: str, message: str, failing: bool = False) -> AsyncIterator[dict]:
+        """`failing=True` marks a deliberately failed turn (EVALS 6): an error turn's log goes to runs/failing/."""
         us = self._users[email]
         st = TurnState(turn_id=new_turn_id(), user=email, message=message)
         span, ctx = tracing.start_turn_span(email, message)  # one root span per turn (O-2)
@@ -181,6 +184,23 @@ class Pipeline:
                 yield self._blocked_final(st, "sanitize", end_span)
                 return
 
+            # ---- judge (J-1..J-4): separate A2A process. Unreachable / timeout / bad verdict = error turn (P-4).
+            yield {"type": "stage", "key": "judge", "label": "A2A Security Judge"}
+            t_j = time.perf_counter()
+            try:
+                data = await self._a2a_guard(ctx, "security.a2a_judge", "judge", "Security Judge", config.JUDGE_URL, message)
+            except GuardError as ge:
+                yield self._guard_error(st, ge, t_j, end_span, failing)
+                return
+            ms = _ms(t_j)
+            allowed = data["verdict"] == "allow"
+            st.steps.append({"key": "judge", "status": "passed" if allowed else "blocked", "ms": ms})
+            yield {"type": "step", "key": "judge", "status": "passed" if allowed else "blocked",
+                   "detail": f"{data['verdict']}: {data['reason']}", "ms": ms, "span": "security.a2a_judge", "kind": "A2A"}
+            if not allowed:
+                yield self._blocked_final(st, "judge", end_span)
+                return
+
             final_text, cap_reason, error = "", None, None
             async for ev in self._run_agent(us, st, ctx):
                 if ev["type"] == "_result":
@@ -209,6 +229,24 @@ class Pipeline:
             }
         finally:
             end_span("", "turn abandoned before a terminal event")  # no-op if already ended
+
+    async def _a2a_guard(self, ctx, span_name: str, key: str, label: str, url: str, text: str) -> dict:
+        """Call an A2A guard inside its named span. The span goes red on any failure. Verdict must be explicit (R-9)."""
+        with tracing.step_span(ctx, span_name, "GUARDRAIL", **{"a2a.url": url, "a2a.method": "tasks/send"}) as sp:
+            data = await a2a_client.tasks_send(key, label, url, text)
+            if key == "judge" and data.get("verdict") not in ("allow", "block"):
+                raise GuardError(key, f"{label} returned no explicit verdict: {str(data)[:120]}")
+            sp.set_attribute("guard.verdict", str(data.get("verdict", "")))
+            sp.set_attribute("guard.reason", str(data.get("reason", "")))
+        return data
+
+    def _guard_error(self, st: TurnState, ge: GuardError, t_start: float, end_span, failing: bool) -> dict:
+        """P-4: a guard that errors fails the turn loudly, naming the step. Never a silent pass."""
+        st.terminated = "error"
+        st.steps.append({"key": ge.step, "status": "error", "ms": _ms(t_start), "error": ge.message})
+        write_run_log(st.log(), failing=failing)
+        end_span(ge.message, ge.message)
+        return {"type": "error", "step": ge.step, "status": 502, "error": ge.message, "terminated": "error"}
 
     def _blocked_final(self, st: TurnState, key: str, end_span) -> dict:
         """P-3: a blocking guard ends the turn at once. No later step runs, including save. Run log first (P-5)."""
