@@ -54,6 +54,13 @@ async def main() -> int:
                     help="mark this session's turns as the deliberate failing trajectory (logs go to runs/failing/)")
     args = ap.parse_args()
 
+    from support import health
+
+    h = await health.check_all()  # C-4: refuse to start, naming what is down
+    if health.down(h):
+        print("Refusing to start; these services are down: " + ", ".join(f"{k} ({h[k]})" for k in health.down(h)), file=sys.stderr)
+        return 2
+
     pipe = await Pipeline().start()
     try:
         email = _ask("Email: ")

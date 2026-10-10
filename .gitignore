@@ -17,3 +17,6 @@ reports/
 pgdata/
 .toolbox/
 node_modules/
+
+# local run state
+.run/
