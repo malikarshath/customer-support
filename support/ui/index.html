@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Customer Support</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2230; --mute:#667085; --line:#e3e6ec; --ok:#12805c; --bad:#b42318; --warn:#b54708; --acc:#2f5bea; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; }
+  #who { color:var(--mute); }
+  button { font:inherit; padding:7px 14px; border:1px solid var(--line); background:var(--card); border-radius:6px; cursor:pointer; }
+  button.primary { background:var(--acc); color:#fff; border-color:var(--acc); }
+  button:disabled { opacity:.5; cursor:default; }
+  input { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; width:100%; }
+  #login { max-width:340px; margin:80px auto; background:var(--card); padding:24px; border:1px solid var(--line); border-radius:10px; }
+  #login label { display:block; margin:10px 0 4px; color:var(--mute); }
+  #login .err { color:var(--bad); margin-top:10px; min-height:18px; }
+  #app { display:none; grid-template-columns: minmax(0,1fr) minmax(0,1.4fr); gap:16px; padding:16px 20px; height:calc(100vh - 53px); }
+  .pane { background:var(--card); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; min-height:0; }
+  .pane h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:0; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .scroll { overflow:auto; padding:12px 14px; flex:1; }
+  .msg { margin:0 0 10px; padding:9px 12px; border-radius:8px; white-space:pre-wrap; max-width:90%; }
+  .msg.user { background:var(--acc); color:#fff; margin-left:auto; }
+  .msg.agent { background:#eef1f6; }
+  .msg.blocked { background:#fdecea; color:var(--bad); }
+  .msg.error { background:#fff4e5; color:var(--warn); }
+  form#send { display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--line); }
+  .step { border:1px solid var(--line); border-radius:8px; margin-bottom:8px; padding:8px 10px; }
+  .step .top { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+  .step .key { font-weight:600; }
+  .pill { font-size:11px; padding:1px 8px; border-radius:99px; background:#eef1f6; color:var(--mute); }
+  .pill.passed, .pill.ok { background:#e6f4ee; color:var(--ok); }
+  .pill.blocked, .pill.failed, .pill.error { background:#fdecea; color:var(--bad); }
+  .pill.running { background:#e8eefe; color:var(--acc); }
+  .meta { color:var(--mute); font-size:12px; }
+  .detail { margin-top:4px; }
+  code, pre { font:12px/1.4 ui-monospace,Menlo,monospace; }
+  pre { background:#f3f4f7; padding:8px; border-radius:6px; overflow:auto; margin:6px 0 0; white-space:pre-wrap; word-break:break-word; }
+  table { border-collapse:collapse; margin-top:6px; font-size:12px; width:100%; }
+  th, td { border:1px solid var(--line); padding:3px 7px; text-align:left; vertical-align:top; }
+  th { background:#f3f4f7; }
+  .mem { margin-top:6px; font-size:12px; }
+  .mem div { padding:3px 0; border-top:1px dashed var(--line); }
+  a { color:var(--acc); }
+  .turn { margin-bottom:18px; }
+  form#send input { flex:1; min-width:0; }
+  @media (max-width: 800px) { #app { grid-template-columns: minmax(0,1fr); height:auto; } .pane { max-height:80vh; } }
+  .turn > .hdr { font-size:12px; color:var(--mute); margin-bottom:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Customer Support</h1>
+  <div><span id="who"></span> <button id="logout" style="display:none">Log out</button></div>
+</header>
+
+<form id="login" autocomplete="off">
+  <h2 style="margin:0 0 6px;font-size:18px">Sign in</h2>
+  <label for="email">Email</label><input id="email" type="email" required>
+  <label for="password">Password</label><input id="password" type="password" required>
+  <div class="err" id="loginErr"></div>
+  <button class="primary" type="submit" style="width:100%;margin-top:8px">Log in</button>
+</form>
+
+<div id="app">
+  <section class="pane">
+    <h2>Conversation</h2>
+    <div class="scroll" id="chat"></div>
+    <form id="send"><input id="msg" placeholder="Ask about your orders…" autocomplete="off"><button class="primary" id="sendBtn" type="submit">Send</button></form>
+  </section>
+  <section class="pane">
+    <h2>Pipeline, live</h2>
+    <div class="scroll" id="steps"></div>
+  </section>
+</div>
+
+<script>
+"use strict";
+let userId = null;
+const $ = (id) => document.getElementById(id);
+
+// Build DOM nodes with textContent only: nothing from the model, a tool or a user is ever parsed as HTML.
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+function bubble(cls, text) {
+  const m = el("div", "msg " + cls, text);
+  $("chat").appendChild(m); $("chat").scrollTop = $("chat").scrollHeight;
+  return m;
+}
+function pill(text, cls) { return el("span", "pill " + (cls || ""), text); }
+
+// W-4: a tool result is a table, not a JSON string.
+function table(rows) {
+  if (!Array.isArray(rows)) rows = rows === null || rows === undefined ? [] : [rows];
+  if (!rows.length) return el("div", "meta", "(no rows)");
+  if (typeof rows[0] !== "object" || rows[0] === null) rows = rows.map((v) => ({ value: v }));
+  const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  const t = el("table"), h = el("tr");
+  cols.forEach((c) => h.appendChild(el("th", null, c)));
+  t.appendChild(h);
+  rows.forEach((r) => {
+    const tr = el("tr");
+    cols.forEach((c) => tr.appendChild(el("td", null, r[c] === null || r[c] === undefined ? "" : typeof r[c] === "object" ? JSON.stringify(r[c]) : String(r[c]))));
+    t.appendChild(tr);
+  });
+  return t;
+}
+
+// The statement with `$n` replaced by the values the tool ran with; a bound parameter is shown as bound.
+function filledSql(info, args) {
+  if (!info || !info.statement) return "";
+  let sql = info.statement;
+  (info.params || []).forEach((p, i) => {
+    const bound = (info.bound || []).includes(p);
+    const v = bound ? `⟨${p}: bound from session⟩` : JSON.stringify(args && args[p] !== undefined ? args[p] : null);
+    sql = sql.split("$" + (i + 1)).join(v);
+  });
+  return sql;
+}
+
+async function post(path, body) {
+  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+$("login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginErr").textContent = "";
+  const r = await post("/api/login", { email: $("email").value, password: $("password").value });
+  const j = await r.json();
+  if (!r.ok) { $("loginErr").textContent = j.error || "Login failed."; return; }
+  userId = j.user_id;
+  $("who").textContent = j.full_name + (j.is_premium ? " · premium" : "");
+  $("logout").style.display = ""; $("login").style.display = "none"; $("app").style.display = "grid";
+  $("password").value = ""; $("msg").focus();
+});
+
+$("logout").addEventListener("click", async () => {
+  if (userId) await post("/api/logout", { user_id: userId });
+  userId = null; $("chat").textContent = ""; $("steps").textContent = "";
+  $("app").style.display = "none"; $("login").style.display = ""; $("logout").style.display = "none"; $("who").textContent = "";
+});
+
+$("send").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("msg").value.trim();
+  if (!text) return;
+  $("msg").value = ""; $("sendBtn").disabled = true;
+  bubble("user", text);
+  const turn = el("div", "turn"), hdr = el("div", "hdr", "new turn…");
+  turn.appendChild(hdr); $("steps").appendChild(turn);
+  const nodes = {}, calls = {};
+  const scrollSteps = () => { $("steps").scrollTop = $("steps").scrollHeight; };
+
+  function stepBox(key, label) {
+    if (nodes[key]) return nodes[key];
+    const box = el("div", "step"), top = el("div", "top");
+    top.appendChild(el("span", "key", label || key));
+    const st = pill("running", "running"); top.appendChild(st);
+    const meta = el("span", "meta"); top.appendChild(meta);
+    box.appendChild(top);
+    const detail = el("div", "detail"); box.appendChild(detail);
+    turn.appendChild(box);
+    nodes[key] = { box, st, meta, detail };
+    return nodes[key];
+  }
+
+  function handle(ev) {
+    switch (ev.type) {
+      case "trace": {
+        hdr.textContent = ev.turn_id + " · ";
+        if (ev.url) { const a = el("a", null, "open trace in Phoenix"); a.href = ev.url; a.target = "_blank"; a.rel = "noopener"; hdr.appendChild(a); }
+        else hdr.appendChild(document.createTextNode("trace link unavailable"));
+        break;
+      }
+      case "stage": stepBox(ev.key, ev.label); break;
+      case "step": {
+        const n = stepBox(ev.key);
+        n.st.textContent = ev.status; n.st.className = "pill " + ev.status;
+        n.meta.textContent = `${ev.kind || ""} · ${(ev.ms || 0).toLocaleString()} ms · ${ev.span || ""}`;
+        n.detail.textContent = ev.detail || "";
+        if (ev.memories) {
+          const m = el("div", "mem");
+          if (!ev.memories.length) m.appendChild(el("div", null, "No memories recalled."));
+          ev.memories.forEach((x) => m.appendChild(el("div", null,
+            `${x.inserted ? "✔ inserted" : "✘ skipped" + (x.reason ? " (" + x.reason + ")" : "")} · score ${Number(x.score).toFixed(2)} · ${x.memory}`)));
+          n.detail.appendChild(m);
+        }
+        break;
+      }
+      case "llm": {
+        const b = el("div", "step"), top = el("div", "top");
+        top.appendChild(el("span", "key", "LLM")); top.appendChild(pill(ev.decision));
+        top.appendChild(el("span", "meta", `${ev.model} · ${ev.tokens_in} in / ${ev.tokens_out} out · ${ev.ms.toLocaleString()} ms · ${ev.span}`));
+        b.appendChild(top); turn.appendChild(b); break;
+      }
+      case "tool_call": {
+        const b = el("div", "step"), top = el("div", "top");
+        top.appendChild(el("span", "key", "tool: " + ev.name));
+        top.appendChild(pill(ev.info.access, ev.info.access === "READ" ? "ok" : "blocked"));
+        top.appendChild(el("span", "meta", `${ev.info.kind} · ${ev.span}`));
+        b.appendChild(top);
+        b.appendChild(el("pre", null, "args: " + JSON.stringify(ev.args)));
+        b.appendChild(el("pre", null, filledSql(ev.info, ev.args)));
+        const res = el("div", "detail", "running…"); b.appendChild(res);
+        calls[ev.id] = { res, pillHost: top };
+        turn.appendChild(b); break;
+      }
+      case "tool_result": {
+        const c = calls[ev.id]; if (!c) break;
+        c.res.textContent = "";
+        c.pillHost.appendChild(pill(ev.ok ? "ok" : "failed", ev.ok ? "ok" : "failed"));
+        c.pillHost.appendChild(el("span", "meta", ev.ms + " ms"));
+        c.res.appendChild(ev.ok ? table(ev.result) : el("pre", null, JSON.stringify(ev.result)));
+        break;
+      }
+      case "final": {
+        bubble(ev.blocked ? "blocked" : "agent", ev.response);
+        const b = el("div", "step"), top = el("div", "top");
+        top.appendChild(el("span", "key", "final")); top.appendChild(pill(ev.terminated, ev.blocked ? "blocked" : "passed"));
+        top.appendChild(el("span", "meta", `${ev.wall_clock_ms.toLocaleString()} ms · ${ev.tokens.in} in / ${ev.tokens.out} out tokens` + (ev.blocked_at ? ` · blocked at ${ev.blocked_at}` : "")));
+        b.appendChild(top); turn.appendChild(b); break;
+      }
+      case "error": {
+        bubble("error", `Something went wrong at ${ev.step}: ${ev.error}`);
+        const n = nodes[ev.step]; if (n) { n.st.textContent = "error"; n.st.className = "pill error"; n.detail.textContent = ev.error; }
+        break;
+      }
+    }
+    scrollSteps();
+  }
+
+  try {
+    const r = await post("/api/chat", { user_id: userId, message: text });
+    if (!r.ok) { const j = await r.json(); bubble("error", j.error || "Request failed."); hdr.textContent = "rejected (" + r.status + ")"; }
+    else {
+      // W-3: each line is rendered the moment it arrives, so steps show up while the turn runs.
+      const reader = r.body.getReader(), dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+          if (line) handle(JSON.parse(line));
+        }
+      }
+      if (buf.trim()) handle(JSON.parse(buf));
+    }
+  } catch (err) {
+    bubble("error", "Connection lost: " + err.message);
+  }
+  $("sendBtn").disabled = false; $("msg").focus();
+});
+</script>
+</body>
+</html>
