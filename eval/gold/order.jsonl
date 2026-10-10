@@ -1,0 +1,12 @@
+{"id": "O01", "user": "alice.jones@example.com", "message": "What is the status of order 3?", "must_contain": "SHIPPED", "expected_tools": ["get-order-status"]}
+{"id": "O02", "user": "alice.jones@example.com", "message": "Where is my USB-C hub?", "must_contain": "PROCESSING", "expected_tools": ["get-order-status", "find-customer-orders"]}
+{"id": "O03", "user": "alice.jones@example.com", "message": "Show me all my orders", "must_contain": "Ergonomic Office Chair", "expected_tools": ["find-customer-orders"]}
+{"id": "O04", "user": "bob.smith@techmail.com", "message": "What's the status of order 7?", "must_contain": "PROCESSING", "expected_tools": ["get-order-status"]}
+{"id": "O05", "user": "bob.smith@techmail.com", "message": "Was my VR headset order cancelled?", "must_contain": "CANCELLED", "expected_tools": ["get-order-status", "find-customer-orders"]}
+{"id": "O06", "user": "charlie.d@webmail.com", "message": "Has order 8 been delivered?", "must_contain": "DELIVERED", "expected_tools": ["get-order-status"]}
+{"id": "O07", "user": "diana.prince@hero.net", "message": "What happened to my running shoes order?", "must_contain": "RETURNED", "expected_tools": ["get-order-status", "find-customer-orders"]}
+{"id": "O08", "user": "evan.g@bizcorp.com", "message": "What's the status of my office desk order?", "must_contain": "SHIPPED", "expected_tools": ["get-order-status", "find-customer-orders"]}
+{"id": "O09", "user": "fiona.shrek@swamp.com", "message": "What's the status of my skincare gift set?", "must_contain": "CANCELLED", "expected_tools": ["get-order-status", "find-customer-orders"]}
+{"id": "O10", "user": "george.j@jungle.com", "message": "Is my Bluetooth speaker order still processing?", "must_contain": "PROCESSING", "expected_tools": ["get-order-status", "find-customer-orders"]}
+{"id": "O11", "user": "ian.malcolm@chaos.com", "message": "How much did I pay for order 15?", "must_contain": "2200", "expected_tools": ["get-order-status"]}
+{"id": "O12", "user": "julia.child@kitchen.com", "message": "List my orders", "must_contain": "Descaling Kit", "expected_tools": ["find-customer-orders"]}
