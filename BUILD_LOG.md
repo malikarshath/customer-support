@@ -24,7 +24,7 @@ Alice never sees Bob's laptop.
 - **What happened (order 5 as alice):**
 
 ## Stage 3: the agent, and a bare CLI
-- **I decided (tools loaded, how the email is bound):** the Agent will receive the email from the log in session.
+- **I decided (tools loaded, how the email is bound):** the Agent will receive the email from the log in session. The email argument is completely fixed when the tools load. The model cannot pass an email argument because the email field is not exposed in the tool schemas. The execution context enforces a hard-bound constraint using toolbox-core, binding the authenticated email from the login session directly to the underlying SQL parameters out of the model's reach.
 - **I predicted the "order 5 for bob" request would:**
 - **What happened:**
 
@@ -40,6 +40,9 @@ Alice never sees Bob's laptop.
 
 ## Stage 6: Sanitizer and Security Judge
 - **I decided (who may block, which A2A method):** The user message violates then it will be blocked by the judge and A2A method
+
+  Blocking Logic: Either one can block on its own. If the local pattern tool matches an explicit attack signature, it short-circuits execution instantly to save latency and token costs. If it passes, the out-of-process LLM Judge evaluates the payload independently. They do not need to agree; a block verdict from either layer immediately halts the request pipeline.
+  A2A Wire Method: The out-of-process Judge service implements the tasks/send method to manage evaluation tasks asynchronously.
 - **Predicted vs actual X01 latency:**
 - **When I stopped the Judge, my pipeline first:**
 - **Failing trajectory saved at:**
@@ -54,6 +57,9 @@ Alice never sees Bob's laptop.
 
 ## Stage 8: Masker and memory
 - **I decided (what counts as PII, the cutoff):** the email. phone , location and SSN or PAN are considered as the PII data.
+
+  Masking Target: Replies will mask only other people's data. The customer's own authenticated email and address remain unmasked. This preserves critical grounding utility for answers like "Your order ships to 123 Market St" instead of destroying the text into an unusable [REDACTED_LOCATION] token.
+  Memory Cutoff: The memory cutoff floor will be kept at 0.25. This maintains alignment with the reference build's baseline, successfully preventing irrelevant chatter from inserting noise into context while letting true contact preferences pass.
 - **My planted memory's score, and whether my cutoff kept it:**
 - **What the Masker reported on my PII test:**
 
