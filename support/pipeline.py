@@ -21,7 +21,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from toolbox_core import ToolboxClient
 
-from support import config
+from support import config, tracing
 from support.agent import APP_NAME, MODEL, TOOLBOX_URL, build_agent, check_login, load_agent_tools
 from support.runlog import write_run_log
 from support.toolinfo import tool_info
@@ -110,6 +110,7 @@ class Pipeline:
         self._users: dict[str, UserSession] = {}
 
     async def start(self) -> "Pipeline":
+        tracing.setup()
         self._client = ToolboxClient(TOOLBOX_URL)
         await self._client.__aenter__()
         return self
@@ -142,37 +143,58 @@ class Pipeline:
     async def run_turn(self, email: str, message: str) -> AsyncIterator[dict]:
         us = self._users[email]
         st = TurnState(turn_id=new_turn_id(), user=email, message=message)
-        st.trace_id = uuid.uuid4().hex  # replaced by the real OpenTelemetry trace id when Phoenix lands (FDE-7)
-        yield {"type": "trace", "turn_id": st.turn_id, "trace_id": st.trace_id, "url": None}
+        span, ctx = tracing.start_turn_span(email, message)  # one root span per turn (O-2)
+        st.trace_id = tracing.trace_id_hex(span)
+        span.set_attribute("turn.id", st.turn_id)
+        ended = False
 
-        final_text, cap_reason, error = "", None, None
-        async for ev in self._run_agent(us, st):
-            if ev["type"] == "_result":
-                final_text, cap_reason, error = ev["text"], ev["cap"], ev["error"]
+        def end_span(output: str, err: str | None = None) -> None:
+            nonlocal ended
+            if ended:
+                return
+            ended = True
+            span.set_attribute("output.value", output)
+            span.set_attribute("turn.terminated", st.terminated)
+            if err:
+                tracing.fail(span, err)
+            span.end()
+
+        try:
+            yield {"type": "trace", "turn_id": st.turn_id, "trace_id": st.trace_id, "url": tracing.trace_url(st.trace_id)}
+
+            final_text, cap_reason, error = "", None, None
+            async for ev in self._run_agent(us, st, ctx):
+                if ev["type"] == "_result":
+                    final_text, cap_reason, error = ev["text"], ev["cap"], ev["error"]
+                else:
+                    yield ev
+
+            if error:
+                st.terminated = "error"
+                write_run_log(st.log())
+                end_span(error, error)
+                yield {"type": "error", "step": "agent", "status": 502, "error": error, "terminated": "error"}
+                return
+
+            if cap_reason:
+                st.terminated = "cap"
+                final_text = CAP_REPLY.format(why=cap_reason)
             else:
-                yield ev
+                st.terminated = "done"
+            write_run_log(st.log())  # P-5: before the terminal event
+            end_span(final_text)
+            yield {
+                "type": "final", "blocked": False, "blocked_at": None, "response": final_text,
+                "terminated": st.terminated, "wall_clock_ms": _ms(st.t0),
+                "tokens": {"in": st.tokens_in, "out": st.tokens_out},
+            }
+        finally:
+            end_span("", "turn abandoned before a terminal event")  # no-op if already ended
 
-        if error:
-            st.terminated = "error"
-            write_run_log(st.log())
-            yield {"type": "error", "step": "agent", "status": 502, "error": error, "terminated": "error"}
-            return
-
-        if cap_reason:
-            st.terminated = "cap"
-            final_text = CAP_REPLY.format(why=cap_reason)
-        else:
-            st.terminated = "done"
-        write_run_log(st.log())  # P-5: before the terminal event
-        yield {
-            "type": "final", "blocked": False, "blocked_at": None, "response": final_text,
-            "terminated": st.terminated, "wall_clock_ms": _ms(st.t0),
-            "tokens": {"in": st.tokens_in, "out": st.tokens_out},
-        }
-
-    async def _run_agent(self, us: UserSession, st: TurnState) -> AsyncIterator[dict]:
+    async def _run_agent(self, us: UserSession, st: TurnState, ctx) -> AsyncIterator[dict]:
         """Run the ADK agent, translating its events into llm / tool_call / tool_result events, under the P-6 budgets."""
         yield {"type": "stage", "key": "agent", "label": "Support agent"}
+        t_agent = time.perf_counter()
         msg = types.Content(role="user", parts=[types.Part(text=st.message)])
         gen = us.runner.run_async(user_id=us.email, session_id=us.session_id, new_message=msg)
 
@@ -187,10 +209,12 @@ class Pipeline:
                     cap = f"over the {config.T_BUD_WALL_S}s time limit"
                     break
                 try:
-                    ev = await asyncio.wait_for(gen.__anext__(), timeout=remaining)
+                    # Same task throughout (no wait_for): ADK's own spans open and close around these steps.
+                    async with asyncio.timeout(remaining):
+                        ev = await tracing.in_context(ctx, gen.__anext__())
                 except StopAsyncIteration:
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     cap = f"over the {config.T_BUD_WALL_S}s time limit"
                     break
 
@@ -249,6 +273,10 @@ class Pipeline:
 
         if not error and not cap and not text.strip():
             error = "Support agent returned no final answer"
+        if not error:  # rule 2 (7.3): every stage is followed by its own step
+            yield {"type": "step", "key": "agent", "status": "passed", "kind": "in-process",
+                   "detail": f"{st.llm_calls} model call(s), {len(st.tool_calls)} tool call(s)" + (f"; stopped: {cap}" if cap else ""),
+                   "ms": _ms(t_agent), "span": f"invoke_agent {us.runner.agent.name}"}
         yield {"type": "_result", "text": text, "cap": cap, "error": error}
 
 
