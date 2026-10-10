@@ -24,7 +24,7 @@ Alice never sees Bob's laptop.
 - **What happened (order 5 as alice):**
 
 ## Stage 3: the agent, and a bare CLI
-- **I decided (tools loaded, how the email is bound):**
+- **I decided (tools loaded, how the email is bound):** the Agent will receive the email from the log in session.
 - **I predicted the "order 5 for bob" request would:**
 - **What happened:**
 
@@ -39,7 +39,7 @@ Alice never sees Bob's laptop.
 - **One thing the trace showed that the reply didn't:**
 
 ## Stage 6: Sanitizer and Security Judge
-- **I decided (who may block, which A2A method):**
+- **I decided (who may block, which A2A method):** The user message violates then it will be blocked by the judge and A2A method
 - **Predicted vs actual X01 latency:**
 - **When I stopped the Judge, my pipeline first:**
 - **Failing trajectory saved at:**
@@ -53,7 +53,7 @@ Alice never sees Bob's laptop.
   | v1 | | | |
 
 ## Stage 8: Masker and memory
-- **I decided (what counts as PII, the cutoff):**
+- **I decided (what counts as PII, the cutoff):** the email. phone , location and SSN or PAN are considered as the PII data.
 - **My planted memory's score, and whether my cutoff kept it:**
 - **What the Masker reported on my PII test:**
 
