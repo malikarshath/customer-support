@@ -1,0 +1,91 @@
+# MCP Toolbox config (SPEC 5.2, M-2..M-8). Credentials come from the environment (.env), never this file.
+#
+# Ownership is enforced IN THE SQL (M-4): every statement filters on the customer's email.
+# The email parameter is declared here because the SQL needs it, but the agent loads each tool with
+# that parameter BOUND to the logged-in session's email (toolbox-core bind_param, M-5), so the model
+# never sees it and cannot choose another one.
+
+sources:
+  support-postgres:
+    kind: postgres
+    host: ${DB_HOST}
+    port: ${DB_PORT}
+    database: ${DB_NAME}
+    user: ${DB_USER}
+    password: ${DB_PASSWORD}
+
+tools:
+  get-order-status:
+    kind: postgres-sql
+    source: support-postgres
+    description: >
+      Get the status and details of ONE of the customer's own orders by its numeric order id.
+      Returns no row if the order does not exist or does not belong to this customer.
+    parameters:
+      - name: order_id
+        type: integer
+        description: The numeric order id, e.g. 3.
+      - name: customer_email
+        type: string
+        description: The logged-in customer's email (bound by the application, not chosen by the model).
+    statement: |
+      SELECT order_id, status, delivery_address, items, order_date, total_amount
+      FROM customer_orders
+      WHERE order_id = $1 AND customer_email = $2;
+
+  find-customer-orders:
+    kind: postgres-sql
+    source: support-postgres
+    description: >
+      List all of the logged-in customer's own orders, newest first.
+    parameters:
+      - name: customer_email
+        type: string
+        description: The logged-in customer's email (bound by the application, not chosen by the model).
+    statement: |
+      SELECT order_id, status, delivery_address, items, order_date, total_amount
+      FROM customer_orders
+      WHERE customer_email = $1
+      ORDER BY order_date DESC;
+
+  action-log:
+    kind: postgres-sql
+    source: support-postgres
+    description: >
+      Record a change the customer asked for (cancel, return, address, preference or profile update).
+      This only records the request for a person or later system to act on; it never changes an order.
+      action_type MUST be exactly one of CANCEL_ORDER, RETURN_ORDER, UPDATE_ADDRESS,
+      UPDATE_PREFERENCE, UPDATE_PROFILE. parameters is a JSON object string and must include
+      order_id when an order is involved. Nothing is recorded if the order is not the customer's.
+    parameters:
+      - name: user_email
+        type: string
+        description: The logged-in customer's email (bound by the application, not chosen by the model).
+      - name: action_type
+        type: string
+        description: Exactly one of CANCEL_ORDER, RETURN_ORDER, UPDATE_ADDRESS, UPDATE_PREFERENCE, UPDATE_PROFILE.
+      - name: parameters
+        type: string
+        description: >
+          A JSON object as a string. It must include order_id when an order is involved,
+          for example an object with keys order_id and reason.
+    # M-8: INSERT ... SELECT ... WHERE inserts a row only when no order is named, or the named order is
+    # this user's. A foreign order id inserts zero rows. M-7: the CHECK constraint on the column rejects
+    # any action_type outside the enum, whatever the model sends.
+    statement: |
+      INSERT INTO actions_log (user_email, action_type, parameters)
+      SELECT $1::varchar, $2::varchar, $3::jsonb
+      WHERE ($3::jsonb ->> 'order_id') IS NULL
+         OR EXISTS (
+              SELECT 1 FROM customer_orders
+              WHERE order_id = ($3::jsonb ->> 'order_id')::int AND customer_email = $1::varchar
+            )
+      RETURNING id, timestamp, action_type;
+
+# M-6: the agent's toolset names exactly these three. No tool in this file can modify customer_orders,
+# and the database role (db/db.sh) has no UPDATE or DELETE grant on it either.
+toolsets:
+  support_agent_tools:
+    - get-order-status
+    - find-customer-orders
+    - action-log
