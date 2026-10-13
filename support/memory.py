@@ -68,12 +68,27 @@ def render_input(message: str, candidates: list[dict]) -> str:
     return f"{HEADER}\n{lines}\n\nCustomer message: {message}"
 
 
+async def _with_retry(fn, attempts: int = 3):
+    """Retry a Mem0 call on a transient connection error only (reset, timeout, 5xx-style network failure).
+    Anything else, and the last transient failure, still propagates so the caller fails loud (GuardError)."""
+    for i in range(attempts):
+        try:
+            return await asyncio.to_thread(fn)
+        except GuardError:
+            raise
+        except Exception as e:
+            transient = any(w in f"{type(e).__name__} {e}" for w in ("NetworkError", "Connection", "Timeout", "timed out"))
+            if not transient or i == attempts - 1:
+                raise
+            await asyncio.sleep(0.5 * 2**i)
+
+
 async def recall(email: str, message: str) -> list[dict]:
     def _search():
         return client().search(message, filters={"user_id": email}, top_k=config.T_MEM_TOPK)
 
     try:
-        resp = await asyncio.to_thread(_search)
+        resp = await _with_retry(_search)
     except GuardError:
         raise
     except Exception as e:
@@ -88,7 +103,7 @@ async def save(email: str, message: str) -> dict:
         return client().add([{"role": "user", "content": message}], user_id=email)
 
     try:
-        resp = await asyncio.to_thread(_add)
+        resp = await _with_retry(_add)
     except GuardError:
         raise
     except Exception as e:

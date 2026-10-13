@@ -111,7 +111,8 @@ async def judge(message: str) -> dict:
     # Layer 2: the model reads it. Fresh session per message so one verdict cannot colour the next.
     session = await _sessions.create_session(app_name=APP, user_id="judge")
     try:
-        msg = types.Content(role="user", parts=[types.Part(text=f"Pattern scan result: no signature matched.\n\nCustomer message to judge:\n{message}")])
+        text = f"Pattern scan result: no signature matched.\n\nCustomer message to judge:\n{message}"
+        msg = types.Content(role="user", parts=[types.Part(text=text)])
         text = ""
         async for ev in _runner.run_async(user_id="judge", session_id=session.id, new_message=msg):
             if ev.is_final_response() and ev.content and ev.content.parts:

@@ -1,0 +1,28 @@
+{
+  "turn_id": "turn_54b508ecef9744cd968a",
+  "trace_id": "e2d0a0e61831e947e7bb721ba671ad1d",
+  "user": "alice.jones@example.com",
+  "message": "Where is my last order?",
+  "terminated": "error",
+  "blocked_at": null,
+  "wall_clock_ms": 136,
+  "tokens": {
+    "in": 0,
+    "out": 0
+  },
+  "steps": [
+    {
+      "key": "sanitize",
+      "status": "passed",
+      "ms": 2
+    },
+    {
+      "key": "judge",
+      "status": "error",
+      "ms": 13,
+      "error": "Security Judge unreachable: connection refused (All connection attempts failed)"
+    }
+  ],
+  "tool_calls": [],
+  "llm_calls": 0
+}

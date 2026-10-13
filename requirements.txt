@@ -10,3 +10,6 @@ arize-phoenix==20.20.0
 arize-phoenix-otel==0.17.2
 openinference-instrumentation-google-genai==1.4.12
 opentelemetry-sdk==1.45.1
+ruff==0.17.0
+mypy==2.4.0
+types-pyyaml==6.0.12.20260906

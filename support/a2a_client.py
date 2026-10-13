@@ -7,6 +7,7 @@ default verdict (P-4, R-4).
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import httpx
 from opentelemetry import propagate
@@ -26,7 +27,7 @@ async def tasks_send(step: str, label: str, base_url: str, text: str, timeout: f
     part of the completed task."""
     headers: dict[str, str] = {}
     propagate.inject(headers)  # W3C traceparent, so a traced service can join the turn's trace
-    payload = {
+    payload: dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
         "method": "tasks/send",

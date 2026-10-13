@@ -1,0 +1,13 @@
+# Gate 0 (STATIC): the project's own lint rules, so the result does not depend on a user-level ruff config.
+# Broad `except Exception` is deliberate in this codebase: every one converts the failure into a GuardError or an
+# `error` event (fail loud), so BLE/S rules are not selected.
+line-length = 140
+target-version = "py312"
+extend-exclude = [".venv", ".phoenix", ".toolbox", ".run"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[lint.per-file-ignores]
+# Regex tables: one pattern per line is easier to review than a wrapped one.
+"support/guards/patterns.py" = ["E501"]

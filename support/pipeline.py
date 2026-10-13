@@ -13,19 +13,19 @@ import asyncio
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from toolbox_core import ToolboxClient
 
-from support import config, tracing
-from support import a2a_client, memory
+from support import a2a_client, config, memory, tracing
 from support.a2a_client import GuardError
-from support.guards import guardrail, sanitizer
 from support.agent import APP_NAME, MODEL, TOOLBOX_URL, build_agent, check_login, load_agent_tools
+from support.guards import guardrail, sanitizer
 from support.runlog import write_run_log
 from support.toolinfo import tool_info
 
@@ -115,7 +115,7 @@ class Pipeline:
         self._sessions = InMemorySessionService()
         self._users: dict[str, UserSession] = {}
 
-    async def start(self) -> "Pipeline":
+    async def start(self) -> Pipeline:
         tracing.setup()
         self._client = ToolboxClient(TOOLBOX_URL)
         await self._client.__aenter__()
@@ -126,6 +126,8 @@ class Pipeline:
             await self._client.__aexit__(None, None, None)
 
     async def login(self, email: str, password: str) -> dict | None:
+        if self._client is None:
+            raise RuntimeError("Pipeline.start() must be called before login()")
         user = await check_login(self._client, email, password)
         if not user:
             return None

@@ -80,7 +80,7 @@ async def check_all() -> dict:
         "phoenix": _http_ok(f"http://127.0.0.1:{os.getenv('PHOENIX_PORT', '6006')}/healthz", "phoenix"),
     }
     vals = await asyncio.gather(*keys.values())
-    out = dict(zip(keys, vals))
+    out = dict(zip(keys, vals, strict=True))
     out["status"] = "ok" if all(v == "ok" for v in vals) else "degraded"
     out["model"] = MODEL
     return {"status": out["status"], "model": out["model"], **{k: out[k] for k in DEPS}}

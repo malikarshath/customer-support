@@ -9,8 +9,8 @@ of the runner.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 import httpx
 from opentelemetry import context as otel_context
@@ -28,8 +28,8 @@ def setup() -> None:
     global _INIT
     if _INIT:
         return
-    from phoenix.otel import register
     from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
+    from phoenix.otel import register
 
     provider = register(
         project_name=PROJECT,

@@ -41,7 +41,8 @@ def render(ev: dict) -> str | None:
     if t == "tool_result":
         return f"[tool] -> {'ok' if ev['ok'] else 'FAILED'} · {ev['ms']} ms · {json.dumps(ev['result'])[:300]}"
     if t == "final":
-        return f"Agent: {ev['response']}\n[{ev['terminated']}] {ev['wall_clock_ms']:,} ms · {ev['tokens']['in']} in / {ev['tokens']['out']} out tokens"
+        tk = ev["tokens"]
+        return f"Agent: {ev['response']}\n[{ev['terminated']}] {ev['wall_clock_ms']:,} ms · {tk['in']} in / {tk['out']} out tokens"
     if t == "error":
         return f"ERROR [{ev['step']}] {ev['error']}"
     return None

@@ -9,14 +9,16 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
-from toolbox_core import ToolboxClient
 from google.adk.agents import LlmAgent
+from toolbox_core import ToolboxClient
 
 load_dotenv()
 
 # SPEC names gemini-2.5-flash, but Google returns 404 for it on new API keys ("no longer available to
-# new users"). Default to the model Google recommends; override with SUPPORT_MODEL in .env.
-MODEL = os.getenv("SUPPORT_MODEL", "gemini-3.8-flash")
+# new users"). Default to a lite model: measured on a real two-call tool turn it took ~1.6 s against ~3.7 s for
+# gemini-3.8-flash (thinking tokens dominate; the network edge is ~10 ms), with the same tool call and answer.
+# Override with SUPPORT_MODEL in .env.
+MODEL = os.getenv("SUPPORT_MODEL", "gemini-3.5-flash-lite")
 APP_NAME = "support"
 TOOLBOX_URL = f"http://127.0.0.1:{os.getenv('TOOLBOX_PORT', '5001')}"
 
