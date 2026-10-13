@@ -36,6 +36,7 @@ Alice never sees Bob's laptop.
   ------------------
                   0
 ```
+I expected a clean database reset to maintain consistent test state, got 10 users, 17 orders starting at ID 1, and 0 actions log rows, because TRUNCATE ... RESTART IDENTITY wipes table contents and resets primary key sequences so order IDs like order 3 remain deterministically bound to Alice across test runs.
 
 ---
 
