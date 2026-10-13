@@ -4,54 +4,18 @@
 > learn, but keep the first version in git history. A stranger grades it (`G-DESIGN`), so
 > write for someone who has never seen your code. The five headings are fixed; keep them.
 
+
 ## Components
-
-What are the moving parts, and which of them are separate processes? Name each one and its
-port. Why are the Judge and Masker separate services while the Guardrail runs in-process?
-Answer in your own words, not SPEC's.
-
-**Answer (Malik, first draft):**
-
-The security judge(A2A), Agent(ADk, MCP tool), Masker(A2A). The security judge and masker are the separate process. Because both are sent to the independent agent to maintain the abstract or run the particular piece on the different agent. The Guardrail is the ADK which check the message is safe or not so it runs in process.
+The system consists of six distinct operational components running across five separate processes: Process 1 hosts the central Pipeline and Web Server on Port `8000` (or CLI via standard I/O) to orchestrate the 7-step turn pipeline; Process 2 hosts the MCP Toolbox for Databases on Port `5001` (configured in `.env` and `run.sh`) to serve SQL query endpoints over MCP Process 3 runs the Security Judge as an out-of-process A2A service on Port `10002` to evaluate messages for injection and tampering. Process 1 also executes the Scope Guardrail in-process via an ADK `Runner` to check shop domain relevance Process 4 runs the Data Masker as a standalone A2A service on Port `10003` to redact third-party PII from agent replies and Process 5 runs Arize Phoenix on Port `6006` as a persistent telemetry daemon collecting OpenTelemetry span traces for every turn. The Judge and Masker run as separate processes because they act as company-wide security checkpoints designed to protect multiple services independently, whereas the Guardrail executes in-process because its logic encodes store-specific domain rules ("what this shop sells and supports") that belong directly inside the application code alongside the support agent.
 
 ## Responsibilities
-
-Which component decides that a customer may only see their own orders, and where exactly is
-that line of code or SQL? Which component may hold an API key? Which one decides a turn is
-over budget? For every rule in SPEC §11, say whether it is enforced **in code**, **in a
-prompt**, or **both**, and why. This table is the core of `G-ENFORCE`.
-
-**Answer (Malik, first draft; the SPEC §11 table is still to come):**
-
-Data and MCP tools decides the a customer only sees their own order by enforcing the ownership in the sql. API keys are stored in the .env file. toolss with T-bud which decides a turn in over budget
+Customer data isolation is enforced in SQL within `mcp_toolbox/tools.yaml` (`WHERE order_id = $1 AND customer_email = $2`), with the session email bound at runtime inside `support/agent.py` within `load_agent_tools` and `bound_params_for` System API keys (`GOOGLE_API_KEY`, `MEM0_API_KEY`) are kept in `.env`, while per-turn budget limits are enforced in `pipeline.py` using `config.T_BUD_TOOLS`, `config.T_BUD_TOKENS`, and `config.T_BUD_WALL_S`. Under SPEC §11: R-1 is enforced in both code and prompt (SQL prevents unowned order data from returning, preventing a data leak, while instructions prevent revealing ownership or stating that an unowned order ID exists in the database); R-2 is code-only by invoking `recall` at line 231 of `run_turn` in `pipeline.py` prior to agent execution. R-3 is code-only by omitting mutating tools from `tools.yaml`, limiting loaded toolsets, and enforcing `SELECT`-only DB grants in `db/db.sh` where `UPDATE` returns `permission denied for table customer_orders`; R-4 is code-only via `support/a2a_client.py` (lines 42–65) and `_a2a_guard` / `except GuardError` in `pipeline.py` (lines 188, 305–320) catching transport errors or missing verdicts and yielding a 502 error event (verified in 3-span trace `e2d0a0e61831e947e7bb721ba671ad1d`). R-5 is code-only by having `memory.save` in `support/memory.py` (line 103) pass only user messages to Mem0 while `pipeline.py` (lines 279–291) gates save behind `if st.terminated == "done":` to enforce memory rule R-4 and the event contract that `save` never appears on blocked or errored turns (distinguishing blocked turns under P-3 from errored turns); R-6 uses both prompt instructions in `INSTRUCTION` (shop examples like `"Has my parcel left the warehouse yet?"` vs. line 53 `"Who painted the Mona Lisa?"`) and code-level validation in `parse_decision` (line 69) and `delete_session` (line 96); R-7 is code-only by having `classify()` in `support/memory.py` flag memories over `T_MEM_MAXCHARS` (500 chars) as `inserted: False` before prompt construction; R-8 is code-only via pure Python regex substitutions in `masker.py` (lines 42–68) ensuring PII-free responses remain byte-for-byte identical by construction; R-9 is code-only through strict `"allow"` / `"block"` schema checks in `judge.py` (`parse_verdict`, lines 92–101) and `pipeline.py` (`_a2a_guard`, lines 305–311), where R-4 handles execution failures while R-9 rejects ambiguous payload shapes; R-10 is config/infrastructure via `run.sh` in `launch_phoenix` launching Phoenix as a persistent background daemon using `.phoenix/phoenix.db` (SQLite); and R-11 is code-only via SQL `CHECK` constraints on `actions_log.action_type` in `db/seed.sql` (lines 34–35) that reject invalid inputs like `RETURN_ITEM` at the database engine level.
 
 ## Communication
-
-How does a message travel from the CLI or browser to the database and back? Name each hop's
-protocol (function call, MCP, A2A JSON-RPC, HTTP, NDJSON). Which A2A method did you
-implement, and what does a verdict look like on the wire?
-
-**Answer (Malik, first draft; A2A method and wire verdict still to come):**
-
-web / cli --> Sanitize --> Judge(A2A) --> guardrail (ADK) --> recall(Mem0) --> Agent(ADK + MCP) --> masker(A2A) --> Save (Mem0) --> response to user
+Messages travel across components using standard protocols: the Web UI communicates with `pipeline.py` via HTTP POST to `/api/chat` streaming `application/x-ndjson` events (while the CLI consumes the pipeline generator directly in Python). `pipeline.py` communicates with the Security Judge and Data Masker via A2A JSON-RPC over HTTP using the `tasks/send` method local guards (`sanitizer.py`, `guardrail.py`) are called in-process via Python functions; Mem0 memory operations run over HTTPS REST APIs. the Support Agent invokes MCP Toolbox tools on Port `5001` via Model Context Protocol over HTTP/JSON-RPC; and telemetry spans export to Phoenix via OpenTelemetry OTLP over HTTP to `http://localhost:6006/v1/traces`. A representative A2A `tasks/send` request passes a JSON-RPC payload containing `params.message.parts[]` with input text, and the service responds with an explicit verdict structure such as `result.status.message.parts[0].data` holding `{"verdict": "allow", "reason": "pattern scan result: no signature matched.", "ms": 820}`.
 
 ## State
-
-What is stored, where, and for how long: sessions, memories, traces, run logs, the action
-log? Which of them contain customer data, and who can read each one? What happens to
-memory when a customer's order changes after the memory was saved?
-
-**Answer (Malik, first draft):**
-
-Sessions are log in sessions in the guardrail, memories are the long term (Database ) + Mem0 for the long term agent memory. The run logs and action logs are stored the observability pheonix. Customer data will be stored in the database and Mem0. one the order updates it will update the memory
+System state is stored across distinct tiers: active login sessions live in-memory within ADK's `InMemorySessionService` (cleared on restart); customer preferences and historical memories are persisted in Mem0 Cloud keyed by `user_id` (email) and filtered during recall; OpenTelemetry traces are stored persistently on local disk in `.phoenix/phoenix.db` (SQLite); execution run logs are permanently saved as local JSON files under `runs/<turn_id>.json`; and database audit logs are stored in PostgreSQL's `actions_log` table accessible to the `toolbox` role. Customer PII resides across PostgreSQL (`users`, `customer_orders`), Mem0 vector storage, and local run log files. Updating or cancelling an order in PostgreSQL does not retroactively rewrite past Mem0 memories; Mem0 retains historical user statements, while live order details are dynamically fetched during each turn via MCP database tool calls (`get-order-status`), ensuring grounded SQL facts override stale historical memories.
 
 ## Trade-offs
-
-What did each guard cost you in latency (from your traces), and was it worth it? Did you
-make the Guardrail fail closed, and what does that cost when Gemini is slow? If you changed
-`T-MEM-MINSCORE` or argued against any threshold, give the evidence here, and keep the
-original gate in your report.
-
-**Answer (Malik, first draft; per-guard latency comes later from real traces):**
-
-It cost the fast resolution tiem, Frictionless support experience, i give up give up speed, consistency, and goodwill
+Real guard latency costs measured over the last 91 turns show distinct trade-offs: the Input Sanitizer adds 4 ms (p50 / p95) for instant in-process regex filtering. the Security Judge takes 1,239 ms (p50) / 2,089 ms (p95), short-circuiting known attacks fast with patterns while paying an ~1.2s model cost on passing turns to catch complex prompt injections the Scope Guardrail takes 1,064 ms (p50) / 1,340 ms (p95) as a fail-closed ADK agent, where the real cost of fail-closed is that a single unparseable response or slow Gemini call terminates the customer's turn with a 502 error event rather than allowing unvetted or off-topic queries through; and the Data Masker takes 12 ms (p50) / 14 ms (p95) using pure Python regex substitution to avoid LLM overhead. For memory cutoff calibration, testing revealed that five legitimate customer preferences scored between 0.17 and 0.24 during recall under the default 0.25 threshold. Lowering `T-MEM-MINSCORE` from 0.25 to 0.20 in `support/config.py` allowed three of the five to be recovered (M04, M05, M10), while two (M02 at 0.18 and M07 at 0.19) remained below the cutoff, leaving recall at 8 of 10 (0.80) to just meet the `T-MEM-RECALL` target (with the original 0.25 gate retained in the report for baseline comparison).
