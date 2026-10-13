@@ -17,6 +17,25 @@ Alice never sees Bob's laptop.
 - **I decided:** Executed `TRUNCATE TABLE actions_log, customer_orders, users RESTART IDENTITY` in `db/seed.sql` to clear tables without dropping schema definitions.
 - **I predicted:** *written after*
 - **What happened (paste output):** 
+```text
+  psql:db/seed.sql:14: NOTICE:  relation "users" already exists, skipping
+  psql:db/seed.sql:24: NOTICE:  relation "customer_orders" already exists, skipping
+  psql:db/seed.sql:27: NOTICE:  relation "idx_customer_orders_customer_email" already exists, skipping
+  psql:db/seed.sql:37: NOTICE:  relation "actions_log" already exists, skipping
+  reset ok
+
+   users
+  -------
+      10
+
+   orders | first_id | last_id
+  --------+----------+---------
+       17 |        1 |      17
+
+   actions_log_rows
+  ------------------
+                  0
+```
 
 ---
 
